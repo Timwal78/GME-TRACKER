@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-GME ULTIMATE CYCLE & WARRANT TRACKER
-Tracks all cycles + 59M warrants + price levels
+GME/AMC ULTIMATE CYCLE & WARRANT TRACKER
+Real-time prices • Both stocks • No hardcoded BS
 """
 
 import json
@@ -10,6 +10,7 @@ import os
 from datetime import datetime, timedelta
 from urllib.request import Request, urlopen
 from urllib.error import URLError
+import re
 
 # ==========================================
 # CONFIGURATION
@@ -20,17 +21,26 @@ ALERT_DAYS_BEFORE = 7
 CHECK_INTERVAL_MINUTES = 60
 
 # GME Warrant Info
-WARRANT_STRIKE = 32.00
-WARRANT_EXPIRATION = datetime(2026, 10, 30)
-TOTAL_WARRANTS = 59_000_000
+GME_WARRANT_STRIKE = 32.00
+GME_WARRANT_EXPIRATION = datetime(2026, 10, 30)
+GME_TOTAL_WARRANTS = 59_000_000
 
-# Price Alert Levels
-PRICE_ALERTS = {
+# GME Price Alert Levels
+GME_PRICE_ALERTS = {
     25.00: "🟡 $25 - Warrants getting attention ($7 from ITM)",
     28.00: "🟠 $28 - Warrants nearly ITM ($4 away) - WATCH CLOSELY",
     30.00: "🔴 $30 - CRITICAL - Dealer hedging begins ($2 from ITM)",
     32.00: "🚨 $32 - WARRANTS IN THE MONEY - EXPLOSION IMMINENT",
     35.00: "💥 $35 - Warrants $3 ITM - MOASS TERRITORY"
+}
+
+# AMC Price Alerts (no warrants, but track key levels)
+AMC_PRICE_ALERTS = {
+    5.00: "🟡 $5 - Breaking above key support",
+    7.00: "🟠 $7 - Major resistance level",
+    10.00: "🔴 $10 - CRITICAL - Psychological barrier",
+    15.00: "🚨 $15 - SQUEEZE TERRITORY",
+    20.00: "💥 $20 - MOASS POTENTIAL"
 }
 
 MOASS_ORIGIN = datetime(2021, 1, 28)
@@ -41,100 +51,99 @@ MOASS_ORIGIN = datetime(2021, 1, 28)
 
 CYCLES = {
     # REGULATORY - NEVER COMPRESS
-    'ftd35': {
-        'name': 'T+35 FTD Settlement',
-        'description': 'Reg SHO Rule 204 - ALWAYS 35 days',
+    'ftd35_gme': {
+        'name': 'GME T+35 FTD Settlement',
+        'ticker': 'GME',
         'length': 35,
         'base_date': datetime(2025, 9, 17),
         'type': 'regulatory',
         'emoji': '🔒',
         'alert_days': 7
     },
-
-    # MAJOR CYCLES  
-    'cycle147': {
-        'name': '147-Day Futures Cycle',
-        'description': 'Major institutional rollover',
+    'ftd35_amc': {
+        'name': 'AMC T+35 FTD Settlement',
+        'ticker': 'AMC',
+        'length': 35,
+        'base_date': datetime(2025, 9, 17),
+        'type': 'regulatory',
+        'emoji': '🔒',
+        'alert_days': 7
+    },
+    
+    # MAJOR CYCLES
+    'cycle147_gme': {
+        'name': 'GME 147-Day Futures Cycle',
+        'ticker': 'GME',
         'length': 147,
         'base_date': MOASS_ORIGIN,
         'type': 'institutional',
         'emoji': '🏛️',
         'alert_days': 14
     },
-
-    # FRACTAL COMPRESSION (7-4-1)
-    'frac100': {
-        'name': '100-Day Base Pattern',
-        'length': 100,
+    'cycle147_amc': {
+        'name': 'AMC 147-Day Futures Cycle',
+        'ticker': 'AMC',
+        'length': 147,
         'base_date': MOASS_ORIGIN,
-        'type': 'fractal',
-        'emoji': '🔢',
-        'alert_days': 10
+        'type': 'institutional',
+        'emoji': '🏛️',
+        'alert_days': 14
     },
-    'frac64': {
-        'name': '64-Day Fractal (100×0.64)',
-        'length': 64,
-        'base_date': datetime(2025, 9, 17),
-        'type': 'fractal',
-        'emoji': '🔢',
-        'alert_days': 7
-    },
-    'frac41': {
-        'name': '41-Day Fractal (64×0.64)',
-        'length': 41,
-        'base_date': datetime(2025, 10, 23),
-        'type': 'fractal',
-        'emoji': '🔢',
-        'alert_days': 5
-    },
-    'frac26': {
-        'name': '26-Day Fractal (41×0.64)',
-        'length': 26,
-        'base_date': datetime(2025, 12, 3),
-        'type': 'fractal',
-        'emoji': '🔢',
-        'alert_days': 3
-    },
-    'frac17': {
-        'name': '17-Day Fractal (26×0.64)',
-        'length': 17,
-        'base_date': datetime(2025, 12, 29),
-        'type': 'fractal',
-        'emoji': '🔢',
-        'alert_days': 2
-    },
-    'frac11': {
-        'name': '11-Day Fractal (17×0.64)',
-        'length': 11,
-        'base_date': datetime(2026, 1, 15),
-        'type': 'fractal',
-        'emoji': '🔢',
-        'alert_days': 2
-    },
-    'frac7': {
-        'name': '7-Day Fractal (Final)',
-        'length': 7,
-        'base_date': datetime(2026, 1, 26),
-        'type': 'fractal',
-        'emoji': '🔢',
-        'alert_days': 1
-    },
-
+    
+    # FRACTAL COMPRESSION (7-4-1) - GME
+    'frac100_gme': {'name': 'GME 100-Day Fractal', 'ticker': 'GME', 'length': 100, 'base_date': MOASS_ORIGIN, 'type': 'fractal', 'emoji': '🔢', 'alert_days': 10},
+    'frac64_gme': {'name': 'GME 64-Day Fractal', 'ticker': 'GME', 'length': 64, 'base_date': datetime(2025, 9, 17), 'type': 'fractal', 'emoji': '🔢', 'alert_days': 7},
+    'frac41_gme': {'name': 'GME 41-Day Fractal', 'ticker': 'GME', 'length': 41, 'base_date': datetime(2025, 10, 23), 'type': 'fractal', 'emoji': '🔢', 'alert_days': 5},
+    'frac26_gme': {'name': 'GME 26-Day Fractal', 'ticker': 'GME', 'length': 26, 'base_date': datetime(2025, 12, 3), 'type': 'fractal', 'emoji': '🔢', 'alert_days': 3},
+    'frac17_gme': {'name': 'GME 17-Day Fractal', 'ticker': 'GME', 'length': 17, 'base_date': datetime(2025, 12, 29), 'type': 'fractal', 'emoji': '🔢', 'alert_days': 2},
+    
+    # FRACTAL COMPRESSION (7-4-1) - AMC
+    'frac100_amc': {'name': 'AMC 100-Day Fractal', 'ticker': 'AMC', 'length': 100, 'base_date': MOASS_ORIGIN, 'type': 'fractal', 'emoji': '🔢', 'alert_days': 10},
+    'frac64_amc': {'name': 'AMC 64-Day Fractal', 'ticker': 'AMC', 'length': 64, 'base_date': datetime(2025, 9, 17), 'type': 'fractal', 'emoji': '🔢', 'alert_days': 7},
+    'frac41_amc': {'name': 'AMC 41-Day Fractal', 'ticker': 'AMC', 'length': 41, 'base_date': datetime(2025, 10, 23), 'type': 'fractal', 'emoji': '🔢', 'alert_days': 5},
+    'frac26_amc': {'name': 'AMC 26-Day Fractal', 'ticker': 'AMC', 'length': 26, 'base_date': datetime(2025, 12, 3), 'type': 'fractal', 'emoji': '🔢', 'alert_days': 3},
+    
     # WARRANT EXPIRATION
-    'warrant_exp': {
-        'name': 'GME Warrant Expiration',
-        'description': '59M warrants @ $32 strike expire',
-        'type': 'warrant',
-        'emoji': '📜',
-        'alert_days': 30
-    }
+    'warrant_gme': {'name': 'GME Warrant Expiration', 'ticker': 'GME', 'type': 'warrant', 'emoji': '📜', 'alert_days': 30}
 }
+
+# ==========================================
+# REAL-TIME PRICE FETCHING
+# ==========================================
+
+def fetch_stock_price(ticker):
+    """Fetch real-time stock price from Yahoo Finance"""
+    try:
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
+        req = Request(url)
+        req.add_header('User-Agent', 'Mozilla/5.0')
+        
+        with urlopen(req, timeout=10) as response:
+            data = json.loads(response.read().decode())
+            price = data['chart']['result'][0]['meta']['regularMarketPrice']
+            return round(float(price), 2)
+    except Exception as e:
+        print(f"⚠️  Could not fetch {ticker} price: {e}")
+        return None
+
+def fetch_both_prices():
+    """Fetch GME and AMC prices"""
+    gme = fetch_stock_price('GME')
+    amc = fetch_stock_price('AMC')
+    
+    if gme is None or amc is None:
+        print("⚠️  Price fetch failed, using last known prices")
+        storage = load_storage()
+        gme = gme or storage.get('last_gme_price', 20.50)
+        amc = amc or storage.get('last_amc_price', 4.50)
+    
+    return gme, amc
 
 # ==========================================
 # STORAGE
 # ==========================================
 
-STORAGE_FILE = 'gme_ultimate_tracker.json'
+STORAGE_FILE = 'ultimate_tracker_data.json'
 
 def load_storage():
     if os.path.exists(STORAGE_FILE):
@@ -145,12 +154,11 @@ def load_storage():
             pass
     return {
         'sent_alerts': {},
-        'price_alerts_sent': {},
-        'last_known_price': 20.50,
-        'stats': {
-            'total_alerts': 0,
-            'started': str(datetime.now())
-        }
+        'gme_price_alerts_sent': {},
+        'amc_price_alerts_sent': {},
+        'last_gme_price': 20.50,
+        'last_amc_price': 4.50,
+        'stats': {'total_alerts': 0, 'started': str(datetime.now())}
     }
 
 def save_storage(data):
@@ -183,25 +191,25 @@ def get_next_opex():
     return None
 
 def calculate_next_cycle(cycle_id, cycle_data):
-    if cycle_id == 'warrant_exp':
-        return WARRANT_EXPIRATION
-    if cycle_id == 'opex':
+    if cycle_id == 'warrant_gme':
+        return GME_WARRANT_EXPIRATION
+    if 'opex' in cycle_id:
         return get_next_opex()
-
+    
     now = datetime.now()
     base = cycle_data['base_date']
     length = cycle_data['length']
-
+    
     days_since = (now - base).days
     cycles_passed = days_since // length
-
+    
     next_date = base + timedelta(days=(cycles_passed + 1) * length)
     return next_date
 
 def get_all_upcoming_cycles():
     now = datetime.now()
     cycles = []
-
+    
     # Add OPEX
     opex = get_next_opex()
     if opex:
@@ -209,80 +217,75 @@ def get_all_upcoming_cycles():
         if 0 <= days_until <= 90:
             cycles.append({
                 'id': 'opex',
-                'name': 'Quarterly OPEX (3rd Friday)',
+                'name': 'Quarterly OPEX (Both Stocks)',
+                'ticker': 'BOTH',
                 'date': opex,
                 'days_until': days_until,
                 'type': 'regulatory',
                 'emoji': '📅',
                 'alert_days': 10
             })
-
+    
     # Add all other cycles
     for cycle_id, cycle_data in CYCLES.items():
         next_date = calculate_next_cycle(cycle_id, cycle_data)
         if next_date:
             days_until = (next_date - now).days
-            if 0 <= days_until <= 365:  # Extended for warrant expiration
+            if 0 <= days_until <= 365:
                 cycles.append({
                     'id': cycle_id,
                     'name': cycle_data['name'],
+                    'ticker': cycle_data.get('ticker', 'BOTH'),
                     'date': next_date,
                     'days_until': days_until,
                     'type': cycle_data['type'],
                     'emoji': cycle_data['emoji'],
                     'alert_days': cycle_data.get('alert_days', 7)
                 })
-
+    
     return sorted(cycles, key=lambda x: x['days_until'])
 
 # ==========================================
 # WARRANT CALCULATIONS
 # ==========================================
 
-def calculate_warrant_status(gme_price):
-    """Calculate warrant metrics"""
-    intrinsic = max(0, gme_price - WARRANT_STRIKE)
-    distance_to_itm = WARRANT_STRIKE - gme_price if gme_price < WARRANT_STRIKE else 0
-    percent_to_itm = (distance_to_itm / gme_price * 100) if gme_price > 0 else 0
-
-    days_to_exp = (WARRANT_EXPIRATION - datetime.now()).days
-
-    # Estimate time value (rough)
-    if gme_price < WARRANT_STRIKE:
-        time_value = max(0.50, min(5.00, (WARRANT_STRIKE - gme_price) * 0.15))
-    else:
-        time_value = max(0.20, 2.00 * (days_to_exp / 365))
-
-    estimated_warrant_price = intrinsic + time_value
-
-    # Hedging estimate
-    if gme_price >= WARRANT_STRIKE:
-        hedge_ratio = 0.70  # Deep ITM
+def calculate_gme_warrant_status(gme_price):
+    """Calculate GME warrant metrics"""
+    intrinsic = max(0, gme_price - GME_WARRANT_STRIKE)
+    distance = GME_WARRANT_STRIKE - gme_price if gme_price < GME_WARRANT_STRIKE else 0
+    percent = (distance / gme_price * 100) if gme_price > 0 else 0
+    
+    days_to_exp = (GME_WARRANT_EXPIRATION - datetime.now()).days
+    
+    # Hedge ratio based on proximity to strike
+    if gme_price >= GME_WARRANT_STRIKE:
+        hedge_ratio = 0.70
     elif gme_price >= 30:
-        hedge_ratio = 0.40  # Near ITM
+        hedge_ratio = 0.40
     elif gme_price >= 28:
-        hedge_ratio = 0.20  # Getting close
+        hedge_ratio = 0.20
     else:
-        hedge_ratio = 0.05  # Far OTM
-
-    shares_to_hedge = int(TOTAL_WARRANTS * hedge_ratio)
-
+        hedge_ratio = 0.05
+    
+    shares_to_hedge = int(GME_TOTAL_WARRANTS * hedge_ratio)
+    
     return {
         'intrinsic': intrinsic,
-        'distance_to_itm': distance_to_itm,
-        'percent_to_itm': percent_to_itm,
-        'estimated_warrant_price': estimated_warrant_price,
+        'distance': distance,
+        'percent': percent,
         'hedge_ratio': hedge_ratio,
         'shares_to_hedge': shares_to_hedge,
-        'days_to_expiration': days_to_exp
+        'days_to_exp': days_to_exp
     }
 
-def get_next_price_alert(current_price, sent_alerts):
+def get_next_price_alert(ticker, current_price, sent_alerts):
     """Find next unalerted price level"""
-    for price_level in sorted(PRICE_ALERTS.keys()):
-        alert_key = f"price_{price_level}"
+    alerts = GME_PRICE_ALERTS if ticker == 'GME' else AMC_PRICE_ALERTS
+    
+    for price_level in sorted(alerts.keys()):
+        alert_key = f"{ticker}_price_{price_level}"
         if current_price >= price_level and alert_key not in sent_alerts:
-            return price_level, PRICE_ALERTS[price_level]
+            return price_level, alerts[price_level]
     return None, None
 
 # ==========================================
@@ -290,116 +293,73 @@ def get_next_price_alert(current_price, sent_alerts):
 # ==========================================
 
 def send_discord_message(embed):
-    """Send embed to Discord"""
-    payload = {'username': 'GME Ultimate Tracker', 'embeds': [embed]}
-
+    payload = {'username': 'GME/AMC Ultimate Tracker', 'embeds': [embed]}
     try:
         req = Request(WEBHOOK_URL)
         req.add_header('Content-Type', 'application/json')
         data = json.dumps(payload).encode('utf-8')
-
-        with urlopen(req, data) as response:
+        with urlopen(req, data, timeout=10) as response:
             return response.status == 204
     except:
         return False
 
 def send_cycle_alert(cycle):
-    """Alert for upcoming cycle"""
     days = cycle['days_until']
-
-    if days <= 3:
-        urgency = '🚨 CRITICAL ALERT'
-        color = 16711680
-    elif days <= 7:
-        urgency = '⚠️ WARNING'
-        color = 16776960
-    else:
-        urgency = '📅 UPCOMING'
-        color = 65280
-
+    urgency = '🚨 CRITICAL' if days <= 3 else '⚠️ WARNING' if days <= 7 else '📅 UPCOMING'
+    color = 16711680 if days <= 3 else 16776960 if days <= 7 else 65280
+    
     embed = {
         'title': f"{urgency}: {cycle['name']}",
-        'description': f"**{days} day{'s' if days != 1 else ''} until cycle completion**",
+        'description': f"**{days} day{'s' if days != 1 else ''} until cycle**",
         'color': color,
         'fields': [
+            {'name': '🎯 Ticker', 'value': cycle['ticker'], 'inline': True},
             {'name': '📅 Date', 'value': cycle['date'].strftime('%A, %B %d, %Y'), 'inline': False},
-            {'name': '⏰ Days Until', 'value': f"{days} day{'s' if days != 1 else ''}", 'inline': True},
+            {'name': '⏰ Days Until', 'value': f"{days} days", 'inline': True},
             {'name': '🔄 Type', 'value': cycle['type'].title(), 'inline': True}
         ],
-        'footer': {'text': 'GME Ultimate Tracker'},
+        'footer': {'text': 'GME/AMC Ultimate Tracker'},
         'timestamp': datetime.utcnow().isoformat()
     }
-
+    
     return send_discord_message(embed)
 
-def send_price_alert(price_level, description, current_price, warrant_info):
-    """Alert for price level breach"""
+def send_price_alert(ticker, price_level, description, current_price, warrant_info=None):
     embed = {
-        'title': f"🎯 PRICE ALERT: GME ${price_level:.2f}",
+        'title': f"🎯 {ticker} PRICE ALERT: ${price_level:.2f}",
         'description': description,
         'color': 16776960 if price_level < 32 else 16711680,
         'fields': [
-            {'name': '💰 Current GME Price', 'value': f"${current_price:.2f}", 'inline': True},
-            {'name': '🎯 Alert Level', 'value': f"${price_level:.2f}", 'inline': True},
-            {'name': '📜 Warrant Strike', 'value': f"${WARRANT_STRIKE:.2f}", 'inline': True},
-            {'name': '📊 Distance to ITM', 'value': f"${warrant_info['distance_to_itm']:.2f} ({warrant_info['percent_to_itm']:.1f}%)", 'inline': True},
-            {'name': '💎 Est. Warrant Value', 'value': f"${warrant_info['estimated_warrant_price']:.2f}", 'inline': True},
-            {'name': '🔄 Hedge Ratio', 'value': f"{warrant_info['hedge_ratio']*100:.0f}%", 'inline': True},
-            {'name': '📈 Shares to Hedge', 'value': f"{warrant_info['shares_to_hedge']:,}", 'inline': False}
+            {'name': f'💰 Current {ticker}', 'value': f"${current_price:.2f}", 'inline': True},
+            {'name': '🎯 Alert Level', 'value': f"${price_level:.2f}", 'inline': True}
         ],
-        'footer': {'text': f"59M warrants • {warrant_info['days_to_expiration']} days to expiration"},
+        'footer': {'text': f'{ticker} Price Alert'},
         'timestamp': datetime.utcnow().isoformat()
     }
-
-    return send_discord_message(embed)
-
-def send_warrant_summary(gme_price, warrant_info):
-    """Send daily warrant status summary"""
-    if gme_price >= WARRANT_STRIKE:
-        status = "🚨 IN THE MONEY"
-        color = 16711680
-    elif gme_price >= 30:
-        status = "🔴 CRITICAL ZONE"
-        color = 16744192
-    elif gme_price >= 28:
-        status = "🟠 APPROACHING"
-        color = 16776960
-    else:
-        status = "🟡 MONITORING"
-        color = 65280
-
-    embed = {
-        'title': f"📜 GME WARRANT STATUS - {status}",
-        'description': f"Daily warrant & price update for {datetime.now().strftime('%B %d, %Y')}",
-        'color': color,
-        'fields': [
-            {'name': '💰 GME Price', 'value': f"${gme_price:.2f}", 'inline': True},
-            {'name': '🎯 Strike Price', 'value': f"${WARRANT_STRIKE:.2f}", 'inline': True},
-            {'name': '📏 Distance', 'value': f"${warrant_info['distance_to_itm']:.2f} ({warrant_info['percent_to_itm']:.1f}%)", 'inline': True},
-            {'name': '💎 Warrant Value (Est)', 'value': f"${warrant_info['estimated_warrant_price']:.2f}", 'inline': True},
+    
+    if warrant_info and ticker == 'GME':
+        embed['fields'].extend([
+            {'name': '📜 Warrant Strike', 'value': f"${GME_WARRANT_STRIKE:.2f}", 'inline': True},
+            {'name': '📊 Distance to ITM', 'value': f"${warrant_info['distance']:.2f} ({warrant_info['percent']:.1f}%)", 'inline': True},
             {'name': '🔄 Hedge Ratio', 'value': f"{warrant_info['hedge_ratio']*100:.0f}%", 'inline': True},
-            {'name': '📈 Shares Hedged', 'value': f"{warrant_info['shares_to_hedge']:,}", 'inline': True},
-            {'name': '⏰ Days to Expiration', 'value': f"{warrant_info['days_to_expiration']} days", 'inline': False}
-        ],
-        'footer': {'text': f"Total: {TOTAL_WARRANTS:,} warrants outstanding"},
-        'timestamp': datetime.utcnow().isoformat()
-    }
-
+            {'name': '📈 Shares to Hedge', 'value': f"{warrant_info['shares_to_hedge']:,}", 'inline': True}
+        ])
+    
     return send_discord_message(embed)
 
-def send_test_alert():
-    """Test alert"""
+def send_startup_alert(gme_price, amc_price):
     embed = {
-        'title': '✅ GME Ultimate Tracker - System Online',
-        'description': 'Tracking cycles + 59M warrants @ $32 strike',
+        'title': '✅ GME/AMC Ultimate Tracker - ONLINE',
+        'description': 'Real-time tracking for both meme stocks',
         'color': 65280,
         'fields': [
-            {'name': 'Status', 'value': '🟢 Connected', 'inline': True},
-            {'name': 'Started', 'value': datetime.now().strftime('%I:%M %p'), 'inline': True},
-            {'name': 'Features', 'value': '• All FTD/Fractal Cycles\n• Quarterly OPEX\n• Warrant Tracking\n• Price Level Alerts', 'inline': False}
-        ]
+            {'name': '💰 GME Price', 'value': f"${gme_price:.2f}", 'inline': True},
+            {'name': '💰 AMC Price', 'value': f"${amc_price:.2f}", 'inline': True},
+            {'name': '📜 GME Warrants', 'value': f"{GME_TOTAL_WARRANTS:,} @ ${GME_WARRANT_STRIKE}", 'inline': False},
+            {'name': '✨ Features', 'value': '• Real-time prices\n• All cycles tracked\n• Warrant monitoring\n• Price alerts\n• Both stocks!', 'inline': False}
+        ],
+        'footer': {'text': 'NO HARDCODED PRICES!'}
     }
-
     return send_discord_message(embed)
 
 # ==========================================
@@ -407,113 +367,135 @@ def send_test_alert():
 # ==========================================
 
 def check_and_alert():
-    """Main check routine"""
     storage = load_storage()
     upcoming = get_all_upcoming_cycles()
-
-    gme_price = storage.get('last_known_price', 20.50)
-    warrant_info = calculate_warrant_status(gme_price)
-
+    
+    # Fetch real-time prices
+    print("📡 Fetching real-time prices...")
+    gme_price, amc_price = fetch_both_prices()
+    print(f"   GME: ${gme_price:.2f}")
+    print(f"   AMC: ${amc_price:.2f}")
+    
+    # Update storage
+    storage['last_gme_price'] = gme_price
+    storage['last_amc_price'] = amc_price
+    
+    gme_warrant = calculate_gme_warrant_status(gme_price)
     alerts_sent = 0
-
+    
     # Check cycle alerts
     for cycle in upcoming:
         if cycle['days_until'] <= cycle['alert_days']:
             alert_key = f"{cycle['id']}_{cycle['date'].strftime('%Y-%m-%d')}"
-
             if alert_key not in storage['sent_alerts']:
-                print(f"🔔 Cycle alert: {cycle['name']} ({cycle['days_until']}d)")
-
+                print(f"🔔 {cycle['name']} ({cycle['days_until']}d)")
                 if send_cycle_alert(cycle):
                     storage['sent_alerts'][alert_key] = datetime.now().isoformat()
                     alerts_sent += 1
-
-    # Check price level alerts
-    price_level, description = get_next_price_alert(gme_price, storage.get('price_alerts_sent', {}))
-    if price_level:
-        alert_key = f"price_{price_level}"
-        print(f"🎯 Price alert: ${price_level} - {description}")
-
-        if send_price_alert(price_level, description, gme_price, warrant_info):
-            if 'price_alerts_sent' not in storage:
-                storage['price_alerts_sent'] = {}
-            storage['price_alerts_sent'][alert_key] = datetime.now().isoformat()
+    
+    # Check GME price alerts
+    gme_level, gme_desc = get_next_price_alert('GME', gme_price, storage.get('gme_price_alerts_sent', {}))
+    if gme_level:
+        print(f"🎯 GME ${gme_level} - {gme_desc}")
+        if send_price_alert('GME', gme_level, gme_desc, gme_price, gme_warrant):
+            if 'gme_price_alerts_sent' not in storage:
+                storage['gme_price_alerts_sent'] = {}
+            storage['gme_price_alerts_sent'][f"GME_price_{gme_level}"] = datetime.now().isoformat()
             alerts_sent += 1
-
+    
+    # Check AMC price alerts
+    amc_level, amc_desc = get_next_price_alert('AMC', amc_price, storage.get('amc_price_alerts_sent', {}))
+    if amc_level:
+        print(f"🎯 AMC ${amc_level} - {amc_desc}")
+        if send_price_alert('AMC', amc_level, amc_desc, amc_price):
+            if 'amc_price_alerts_sent' not in storage:
+                storage['amc_price_alerts_sent'] = {}
+            storage['amc_price_alerts_sent'][f"AMC_price_{amc_level}"] = datetime.now().isoformat()
+            alerts_sent += 1
+    
     if alerts_sent > 0:
         storage['stats']['total_alerts'] = storage['stats'].get('total_alerts', 0) + alerts_sent
         save_storage(storage)
+    
+    return len(upcoming), alerts_sent, gme_price, amc_price, gme_warrant
 
-    return len(upcoming), alerts_sent, warrant_info
-
-def print_status(active, warrant_info):
-    """Print status"""
+def print_status(active, gme_price, amc_price, gme_warrant):
     now = datetime.now()
     next_check = now + timedelta(minutes=CHECK_INTERVAL_MINUTES)
-
+    
     print(f"""
 📊 STATUS:
    Active Cycles: {active}
    Last Check: {now.strftime('%I:%M:%S %p')}
    Next Check: {next_check.strftime('%I:%M:%S %p')}
 
-📜 WARRANT STATUS:
-   Distance to $32: ${warrant_info['distance_to_itm']:.2f} ({warrant_info['percent_to_itm']:.1f}%)
-   Est. Warrant Price: ${warrant_info['estimated_warrant_price']:.2f}
-   Hedge Ratio: {warrant_info['hedge_ratio']*100:.0f}%
-   Shares to Hedge: {warrant_info['shares_to_hedge']:,}
-   Days to Expiration: {warrant_info['days_to_expiration']}
+💰 PRICES (LIVE):
+   GME: ${gme_price:.2f}
+   AMC: ${amc_price:.2f}
+
+📜 GME WARRANT STATUS:
+   Distance to $32: ${gme_warrant['distance']:.2f} ({gme_warrant['percent']:.1f}%)
+   Hedge Ratio: {gme_warrant['hedge_ratio']*100:.0f}%
+   Shares to Hedge: {gme_warrant['shares_to_hedge']:,}
+   Days to Expiration: {gme_warrant['days_to_exp']}
     """)
 
 def main():
-    """Main loop"""
     print("""
 ╔══════════════════════════════════════════════════════════════╗
-║       GME ULTIMATE CYCLE & WARRANT TRACKER                   ║
+║       GME/AMC ULTIMATE TRACKER - REAL-TIME PRICES            ║
 ╚══════════════════════════════════════════════════════════════╝
     """)
-
+    
     print("🚀 Starting up...\n")
-    print("📤 Sending test alert...")
-
-    if send_test_alert():
-        print("✅ Test alert sent! Check Discord.\n")
-    else:
-        print("⚠️  Could not send test alert.\n")
-
+    print("📡 Fetching initial prices...")
+    
+    gme, amc = fetch_both_prices()
+    print(f"   GME: ${gme:.2f}")
+    print(f"   AMC: ${amc:.2f}\n")
+    
+    print("📤 Sending startup alert...")
+    if send_startup_alert(gme, amc):
+        print("✅ Startup alert sent!\n")
+    
     print("✅ System running!")
-    print("   • Tracking all FTD/Fractal cycles")
-    print("   • Monitoring 59M warrants @ $32 strike")
-    print("   • Price level alerts at $25, $28, $30, $32, $35")
+    print("   • Real-time GME/AMC prices")
+    print("   • All FTD/Fractal cycles")
+    print("   • 59M GME warrants @ $32")
+    print("   • Price alerts for both stocks")
     print("   (Press Ctrl+C to stop)\n")
-
+    
     check_count = 0
-
+    
     try:
         while True:
             check_count += 1
             now = datetime.now()
-
+            
             print(f"\n{'='*60}")
             print(f"Check #{check_count} - {now.strftime('%A, %B %d - %I:%M:%S %p')}")
             print('='*60)
-
-            active, sent, warrant_info = check_and_alert()
-
+            
+            active, sent, gme, amc, warrant = check_and_alert()
+            
             if sent > 0:
-                print(f"\n✅ Sent {sent} new alert(s)")
+                print(f"\n✅ Sent {sent} alert(s)")
             else:
                 print(f"\n💤 No new alerts")
-
-            print_status(active, warrant_info)
-
+            
+            print_status(active, gme, amc, warrant)
+            
             print(f"😴 Sleeping for {CHECK_INTERVAL_MINUTES} minutes...")
             time.sleep(CHECK_INTERVAL_MINUTES * 60)
-
+            
     except KeyboardInterrupt:
         print("\n\n🛑 Tracker stopped")
         storage = load_storage()
-        print(f"\n📊 STATS:")
+        print(f"\n📊 FINAL STATS:")
         print(f"   Total alerts: {storage['stats'].get('total_alerts', 0)}")
-        print(f"   Running since: {storage['stats'].get('started', 'Unknown')}")
-        print("\n👋 LFG!\n")
+        print(f"   Last GME: ${storage.get('last_gme_price', 0):.2f}")
+        print(f"   Last AMC: ${storage.get('last_amc_price', 0):.2f}")
+        print("\n🚀 TO THE MOON!\n")
+
+if __name__ == "__main__":
+    main()
