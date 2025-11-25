@@ -50,7 +50,7 @@ CYCLES = {
         'emoji': '🔒',
         'alert_days': 7
     },
-    
+
     # MAJOR CYCLES  
     'cycle147': {
         'name': '147-Day Futures Cycle',
@@ -61,7 +61,7 @@ CYCLES = {
         'emoji': '🏛️',
         'alert_days': 14
     },
-    
+
     # FRACTAL COMPRESSION (7-4-1)
     'frac100': {
         'name': '100-Day Base Pattern',
@@ -119,7 +119,7 @@ CYCLES = {
         'emoji': '🔢',
         'alert_days': 1
     },
-    
+
     # WARRANT EXPIRATION
     'warrant_exp': {
         'name': 'GME Warrant Expiration',
@@ -187,21 +187,21 @@ def calculate_next_cycle(cycle_id, cycle_data):
         return WARRANT_EXPIRATION
     if cycle_id == 'opex':
         return get_next_opex()
-    
+
     now = datetime.now()
     base = cycle_data['base_date']
     length = cycle_data['length']
-    
+
     days_since = (now - base).days
     cycles_passed = days_since // length
-    
+
     next_date = base + timedelta(days=(cycles_passed + 1) * length)
     return next_date
 
 def get_all_upcoming_cycles():
     now = datetime.now()
     cycles = []
-    
+
     # Add OPEX
     opex = get_next_opex()
     if opex:
@@ -216,7 +216,7 @@ def get_all_upcoming_cycles():
                 'emoji': '📅',
                 'alert_days': 10
             })
-    
+
     # Add all other cycles
     for cycle_id, cycle_data in CYCLES.items():
         next_date = calculate_next_cycle(cycle_id, cycle_data)
@@ -232,7 +232,7 @@ def get_all_upcoming_cycles():
                     'emoji': cycle_data['emoji'],
                     'alert_days': cycle_data.get('alert_days', 7)
                 })
-    
+
     return sorted(cycles, key=lambda x: x['days_until'])
 
 # ==========================================
@@ -244,17 +244,17 @@ def calculate_warrant_status(gme_price):
     intrinsic = max(0, gme_price - WARRANT_STRIKE)
     distance_to_itm = WARRANT_STRIKE - gme_price if gme_price < WARRANT_STRIKE else 0
     percent_to_itm = (distance_to_itm / gme_price * 100) if gme_price > 0 else 0
-    
+
     days_to_exp = (WARRANT_EXPIRATION - datetime.now()).days
-    
+
     # Estimate time value (rough)
     if gme_price < WARRANT_STRIKE:
         time_value = max(0.50, min(5.00, (WARRANT_STRIKE - gme_price) * 0.15))
     else:
         time_value = max(0.20, 2.00 * (days_to_exp / 365))
-    
+
     estimated_warrant_price = intrinsic + time_value
-    
+
     # Hedging estimate
     if gme_price >= WARRANT_STRIKE:
         hedge_ratio = 0.70  # Deep ITM
@@ -264,9 +264,9 @@ def calculate_warrant_status(gme_price):
         hedge_ratio = 0.20  # Getting close
     else:
         hedge_ratio = 0.05  # Far OTM
-    
+
     shares_to_hedge = int(TOTAL_WARRANTS * hedge_ratio)
-    
+
     return {
         'intrinsic': intrinsic,
         'distance_to_itm': distance_to_itm,
@@ -292,12 +292,12 @@ def get_next_price_alert(current_price, sent_alerts):
 def send_discord_message(embed):
     """Send embed to Discord"""
     payload = {'username': 'GME Ultimate Tracker', 'embeds': [embed]}
-    
+
     try:
         req = Request(WEBHOOK_URL)
         req.add_header('Content-Type', 'application/json')
         data = json.dumps(payload).encode('utf-8')
-        
+
         with urlopen(req, data) as response:
             return response.status == 204
     except:
@@ -306,7 +306,7 @@ def send_discord_message(embed):
 def send_cycle_alert(cycle):
     """Alert for upcoming cycle"""
     days = cycle['days_until']
-    
+
     if days <= 3:
         urgency = '🚨 CRITICAL ALERT'
         color = 16711680
@@ -316,7 +316,7 @@ def send_cycle_alert(cycle):
     else:
         urgency = '📅 UPCOMING'
         color = 65280
-    
+
     embed = {
         'title': f"{urgency}: {cycle['name']}",
         'description': f"**{days} day{'s' if days != 1 else ''} until cycle completion**",
@@ -329,7 +329,7 @@ def send_cycle_alert(cycle):
         'footer': {'text': 'GME Ultimate Tracker'},
         'timestamp': datetime.utcnow().isoformat()
     }
-    
+
     return send_discord_message(embed)
 
 def send_price_alert(price_level, description, current_price, warrant_info):
@@ -350,7 +350,7 @@ def send_price_alert(price_level, description, current_price, warrant_info):
         'footer': {'text': f"59M warrants • {warrant_info['days_to_expiration']} days to expiration"},
         'timestamp': datetime.utcnow().isoformat()
     }
-    
+
     return send_discord_message(embed)
 
 def send_warrant_summary(gme_price, warrant_info):
@@ -367,7 +367,7 @@ def send_warrant_summary(gme_price, warrant_info):
     else:
         status = "🟡 MONITORING"
         color = 65280
-    
+
     embed = {
         'title': f"📜 GME WARRANT STATUS - {status}",
         'description': f"Daily warrant & price update for {datetime.now().strftime('%B %d, %Y')}",
@@ -384,7 +384,7 @@ def send_warrant_summary(gme_price, warrant_info):
         'footer': {'text': f"Total: {TOTAL_WARRANTS:,} warrants outstanding"},
         'timestamp': datetime.utcnow().isoformat()
     }
-    
+
     return send_discord_message(embed)
 
 def send_test_alert():
@@ -399,7 +399,7 @@ def send_test_alert():
             {'name': 'Features', 'value': '• All FTD/Fractal Cycles\n• Quarterly OPEX\n• Warrant Tracking\n• Price Level Alerts', 'inline': False}
         ]
     }
-    
+
     return send_discord_message(embed)
 
 # ==========================================
@@ -410,47 +410,47 @@ def check_and_alert():
     """Main check routine"""
     storage = load_storage()
     upcoming = get_all_upcoming_cycles()
-    
+
     gme_price = storage.get('last_known_price', 20.50)
     warrant_info = calculate_warrant_status(gme_price)
-    
+
     alerts_sent = 0
-    
+
     # Check cycle alerts
     for cycle in upcoming:
         if cycle['days_until'] <= cycle['alert_days']:
             alert_key = f"{cycle['id']}_{cycle['date'].strftime('%Y-%m-%d')}"
-            
+
             if alert_key not in storage['sent_alerts']:
                 print(f"🔔 Cycle alert: {cycle['name']} ({cycle['days_until']}d)")
-                
+
                 if send_cycle_alert(cycle):
                     storage['sent_alerts'][alert_key] = datetime.now().isoformat()
                     alerts_sent += 1
-    
+
     # Check price level alerts
     price_level, description = get_next_price_alert(gme_price, storage.get('price_alerts_sent', {}))
     if price_level:
         alert_key = f"price_{price_level}"
         print(f"🎯 Price alert: ${price_level} - {description}")
-        
+
         if send_price_alert(price_level, description, gme_price, warrant_info):
             if 'price_alerts_sent' not in storage:
                 storage['price_alerts_sent'] = {}
             storage['price_alerts_sent'][alert_key] = datetime.now().isoformat()
             alerts_sent += 1
-    
+
     if alerts_sent > 0:
         storage['stats']['total_alerts'] = storage['stats'].get('total_alerts', 0) + alerts_sent
         save_storage(storage)
-    
+
     return len(upcoming), alerts_sent, warrant_info
 
 def print_status(active, warrant_info):
     """Print status"""
     now = datetime.now()
     next_check = now + timedelta(minutes=CHECK_INTERVAL_MINUTES)
-    
+
     print(f"""
 📊 STATUS:
    Active Cycles: {active}
@@ -472,44 +472,44 @@ def main():
 ║       GME ULTIMATE CYCLE & WARRANT TRACKER                   ║
 ╚══════════════════════════════════════════════════════════════╝
     """)
-    
+
     print("🚀 Starting up...\n")
     print("📤 Sending test alert...")
-    
+
     if send_test_alert():
         print("✅ Test alert sent! Check Discord.\n")
     else:
         print("⚠️  Could not send test alert.\n")
-    
+
     print("✅ System running!")
     print("   • Tracking all FTD/Fractal cycles")
     print("   • Monitoring 59M warrants @ $32 strike")
     print("   • Price level alerts at $25, $28, $30, $32, $35")
     print("   (Press Ctrl+C to stop)\n")
-    
+
     check_count = 0
-    
+
     try:
         while True:
             check_count += 1
             now = datetime.now()
-            
+
             print(f"\n{'='*60}")
             print(f"Check #{check_count} - {now.strftime('%A, %B %d - %I:%M:%S %p')}")
             print('='*60)
-            
+
             active, sent, warrant_info = check_and_alert()
-            
+
             if sent > 0:
                 print(f"\n✅ Sent {sent} new alert(s)")
             else:
                 print(f"\n💤 No new alerts")
-            
+
             print_status(active, warrant_info)
-            
+
             print(f"😴 Sleeping for {CHECK_INTERVAL_MINUTES} minutes...")
             time.sleep(CHECK_INTERVAL_MINUTES * 60)
-            
+
     except KeyboardInterrupt:
         print("\n\n🛑 Tracker stopped")
         storage = load_storage()
@@ -517,6 +517,3 @@ def main():
         print(f"   Total alerts: {storage['stats'].get('total_alerts', 0)}")
         print(f"   Running since: {storage['stats'].get('started', 'Unknown')}")
         print("\n👋 LFG!\n")
-
-if __name__ == "__main__":
-    main()
